@@ -1,0 +1,293 @@
+---
+title: "Dimensional Reduction of currency pair"
+author: "Sugarbayar Enkhbayar"
+date: "1/17/2023"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+## Introduction
+The foreign exchange market is one of the largest in the world. Individuals, organizations, and major banks trade currencies every day. Risk management is very important in forex trading. In other words, it is possible to find currency pairs that are highly correlated with each other using the PCA method.
+```{r eval=T,warning=F,message=F}
+```
+
+## Datasets
+In this project, I will use 31 finance price data of H4 timeframe. I took these data from Metatrader4 platform using my ICmarket's account and python program. There is a MetaTrader5 library in python. It helps to import currency pairs data from MT4 Platform. And it is real time data. You can see python code below. I imported fx data from 2015.01.01 to 2022.12.31. After I import these datas, I saved it as 'df.RDS'. And I will use it from now on. It contains some confidential information. So I used *.
+```{r eval=F, message=FALSE, warning=FALSE}
+import pyreadr
+import MetaTrader5 as mt
+import pandas as pd
+import plotly as pl
+from datetime import datetime
+import plotly.express as px
+import pandas_ta as ta
+import plotly
+import matplotlib.pyplot as plt
+import statistics
+from statistics import stdev
+from statistics import variance
+import os
+import glob
+import numpy as np
+from datetime import datetime, date, timedelta
+import talib as tl
+
+mt.initialize()
+login=******** # account number
+password=****** # password
+server='ICMarketsSC-Demo'
+mt.login(login,password,server)
+list_fx=["AUDCHF","AUDJPY","AUDCAD","AUDNZD","AUDUSD","CADCHF","CADJPY","CHFJPY","EURAUD","EURCAD","EURCHF","EURGBP","EURJPY",
+ "EURNZD","EURUSD","GBPAUD","GBPCAD","GBPCHF","GBPJPY","GBPNZD","GBPUSD","NZDCAD","NZDCHF","NZDJPY","NZDUSD","USDCAD","USDCHF",
+ "USDCNH","USDJPY","XAGUSD","XAUUSD"]
+df=pd.read_pickle('df.pkl')
+for i in list_fx:
+    df1=pd.DataFrame(mt.copy_rates_range(i,mt.TIMEFRAME_H4,datetime(2015,1,1),datetime(2022,12,31)))
+    y="./"+i+".pkl"
+    df1['time']=pd.to_datetime(df1['time'],unit='s')
+    df1=df1[['time', 'close']]
+    df1=df1.rename(columns={'time': 'time', 'close': i})
+    #df1.to_pickle(y)
+    df=df.merge(df1, left_on='time', right_on='time')
+    print('finished')
+pyreadr.write_rds('df.RDS',df)
+```
+Our data has 10765 observations with 31 variables. 
+```{r eval=T,warning=F,message=F}
+df=readRDS("df.RDS")
+df$time <-as.POSIXct(df$time,"05/24/2017 06:13:10", format = "%Y-%m-%d %H:%M:%S")
+dim(df)
+```
+
+## Exploratory Data Analysis {.tabset}
+
+### Variable identification
+We have 29 currency pair variables such AUDCHF, AUDJPY and so on. For example AUDCHF=0,71992. It means 1 AUD equal to 0,71992 CHF.
+And we have 2 commodity product's prices such as gold and silver.
+```{r eval=T,warning=F,message=F}
+library(tidyverse)
+colnames(df)[-1] # 31 currency pairs data
+head(df)
+```
+
+### Missing values
+There is no NA rows.
+```{r eval=T,warning=F,message=F}
+sapply(df, function(x) sum(is.na(x)))
+```
+
+### Univariate analysis-Statistic
+You can see some important statistics of dataset from below table.
+```{r eval=T,warning=F,message=F}
+library(e1071)
+library(moments)
+library(tidyr)
+library(tibble)
+library(tidyverse)
+library(psych)
+df=df[-1]
+describeBy(df)
+```
+### Univariate analysis-Boxplot
+```{r eval=T,warning=F,message=F}
+library(e1071)
+library(moments)
+library(tidyr)
+library(tibble)
+library(tidyverse)
+library(psych)
+boxplot(df[c(1:29)],las = 2)
+boxplot(df[c(30,31)],las = 2)
+```
+
+### Univariate analysis-histogram
+```{r eval=T,warning=F,message=F}
+library(e1071)
+library(moments)
+library(tidyr)
+library(tibble)
+library(tidyverse)
+library(psych)
+par(mfrow = c(3,4))
+for(i in 1:12){
+hist(df[,i],main = colnames(df)[i])
+}
+par(mfrow = c(3,4))
+for(i in 13:24){
+hist(df[,i],main = colnames(df)[i])
+}
+par(mfrow = c(2,4))
+for(i in 25:31){
+hist(df[,i],main = colnames(df)[i])
+}
+par(mfrow = c(1,1))
+```
+
+### Bi-variate analysis
+This is a correlation graphic. It is easy to see the highest and lowest correlation between variables. For example, USDJPY is highly correlated with CADJPY and CHFJPY. NZDCAD is highly correlated with AUDCAD. NZDUSD is highly correlated with AUDUSD. 
+```{r out.width = "100%",eval=T,warning=F,message=F}
+library(qgraph)
+qgraph(cor(df),labels=colnames(df))
+```
+
+### Outlier treatment
+I used IQR to find outlier values. After removing outliers, I have 7676 observations.
+```{r eval=T,warning=F,message=F}
+count(df)
+outliers=df[0,]
+for (i in 1:31) {
+q1=quantile(df[,i], .25)
+q3=quantile(df[,i], .75)
+IQR=IQR(df[,i])
+count_out<-subset(df, df[,i] > (q1 - 1.5*IQR) & df[,i] < (q3 + 1.5*IQR))
+add_out<-setdiff(df,count_out)
+outliers<-rbind(outliers,add_out)
+outliers<-unique(outliers)
+}
+df<-setdiff(df,outliers)
+count(df)
+```
+
+## Rotated PCA {.tabset}
+
+### Train model
+I trained rotated PCA model. Firstly, we have to normalize our data set. After it, we have to calculate covariance and eigen values. Then we trained rotated PCA using principal function with varimax rotation option. 
+There is loadings for each factor. This loadings indicate correlation between currency pair and RC1, RC2. 
+* RC1 is highly positive correlated with AUDCHF,AUDCAD,CADCHF,EURCHF,NZDCHF. And RC1 is highly negative correlated with EURAUD,GBPAUD,GBPNZD, XAUUSD. 
+* RC2 is highly positive correlated with AUDJPY,CADJPY,CHFJPY,EURJPY,GBPJPY,GBPUSD,NZDJPY. And RC2 is highly negative correlated with USDCAD,USDCNH, USDCHF.
+* Goodness of fit is 0,83
+* RC1 can explain 30 percent of 31 variables.
+* RC2 can explain 60 percent of 31 variables.
+* 
+```{r eval=T,warning=F,message=F}
+library(psych)
+library(clusterSim)
+df.n<-data.Normalization(df, type="n1", normalization="column")
+df.cov<-cov(df.n)
+df.eigen<-eigen(df.cov)
+pca4<-principal(df.cov, nfactors=2, rotate="varimax")
+head(pca4)
+```
+
+### Quality measure of PCA
+We can see the complexity an uniqueness of each variable from below plot. GBPCAD and EURCAD has the largest unique value, and they are higher than 0,9. It means that these variables are not strongly correlated with other variables. So I removed these variables from the dataset. I will use dataset without GBPCAD, and EURCAD from now on.
+```{r eval=T,warning=F,message=F}
+par(mfrow=c(1,2))
+plot(pca4$complexity)
+plot(pca4$uniquenesses)
+par(mfrow=c(1,1))
+set<-data.frame(complex=pca4$complexity, unique=pca4$uniqueness)
+tail(set[order(set$unique),])
+df=df[-c(10,17)]
+```
+
+## PCA model {.tabset}
+The main goal of PCA is to minimize dimensions, preserving the covariance of data.
+
+### Covariance and Eigenvalues
+First, we have to normalize our dataset and calculate covariance, and eigenvalues. 
+```{r eval=T,warning=F,message=F}
+library(clusterSim)
+df.n<-data.Normalization(df, type="n1", normalization="column")
+df.cov<-cov(df.n)
+df.eigen<-eigen(df.cov)
+df.eigen$values
+head(df.eigen$vectors)
+```
+
+### Train model
+In order to train PCA model, I used prcomp function. You can see rotation values from below table.
+* We can reduce these 29 variables to at least 1 variable by performing dimensional reduction. PC1 can explain 63% of these variables. PC2 can explain 86% of these variables. If I reduce these 29 variables to three PC, it can explain 94 % of these variables.
+```{r eval=T,warning=F,message=F}
+pca1=prcomp(df.cov,center = F,scale. = F)
+head(pca1)
+summary(pca1)
+```
+
+### Plots
+You can see each dimensional is highly positive and negative correlated with what variables. For example:
+* Dim1 is highly positive correlated with USDCAD,USDCNH,EURAUD,EURNZD,GBPNZD,GBPAUD.
+* Dim1 is highly negative correlated with AUDUSD,NZDUSD,AUDJPY,NZDJPY.
+* Dim2 is highly positive correlated with USDCHF,NZDCHF,AUDCHF,USDCAD,USDCNH.
+* Dim2 is highly negative correlated with CHFJPY,XAGUSD,XAUUSD.
+```{r eval=T,warning=F,message=F}
+library(factoextra)
+fviz_pca_var(pca1, col.var="steelblue")
+fviz_eig(pca1, choice='eigenvalue')
+fviz_eig(pca1) # percentage of explained variance on y-axis
+eig.val<-get_eigenvalue(pca1)
+```
+
+### Cumulative variance
+It shows optimal number of PC. I think 5 PC is optimal number. In other words, PC1 PC2 PC3 PC4 and PC5 can explain 98% of these variables. 
+```{r eval=T,warning=F,message=F}
+a<-summary(pca1)
+plot(a$importance[3,],type="l") 
+```
+
+### Individual results
+```{r eval=T,warning=F,message=F}
+library(factoextra)
+ind<-get_pca_ind(pca1)  
+print(ind)
+head(ind$coord) # coordinates of variables
+head(ind$contrib) # contributions of individuals to PC
+head(ind$cos2) # represents the quality of representation for variables on the factor map
+```
+
+### Contributions of individual variables to PC
+```{r eval=T,warning=F,message=F}
+library(gridExtra)
+var<-get_pca_var(pca1)
+a<-fviz_contrib(pca1, "var", axes=1, xtickslab.rt=90) # default angle=45°
+b<-fviz_contrib(pca1, "var", axes=2, xtickslab.rt=90)
+grid.arrange(a,b,top='Contribution to the first two Principal Components')
+```
+
+## MDS model {.tabset}
+The main goal of MDS is minimizing dimensions, preserving distance between data points.
+
+### Standarize datasets
+```{r eval=T,warning=F,message=F}
+library(tidyverse)
+library(corrplot)
+library(clusterSim)
+df.norm<-data.Normalization(df, type="n1",normalization="column")
+df.norm.plot<-cor(df.norm, method="pearson") 
+corrplot(df.norm.plot, order ="alphabet", tl.cex=0.6)
+```
+
+### Training model
+```{r eval=T,warning=F,message=F}
+dist_df<-dist(t(df.norm))
+as.matrix(dist_df)[1:5, 1:5] # let’s see the distance matrix
+mds1<-cmdscale(dist_df, k=2) #k - the maximum dimension of the space
+summary(mds1)
+plot(mds1)
+```
+
+### Similarity and Dissimilarity matrix
+Similarity - it shows a positive correlation between variables.
+Dissimilarity - it shows a negative correlation between variables.
+```{r eval=T,warning=F,message=F}
+### Similarity and Dissimilarity matrix
+sim<-cor(df.norm)  # similarity matrix
+dis.t<-dist(t(df.norm)) # dissimilarity matrix
+library(smacof)
+dis2<-sim2diss(sim, method=1, to.dist = TRUE)
+head(sim)
+as.matrix(dis2)[1:5,1:5]
+```
+
+### Mantel test
+P value of mantel-test is 0,001. It means our dataset is non-random pattern, interpreted as a similarity of the matrices.
+```{r eval=T,warning=F,message=F}
+### Mantel test
+library(ape)
+mantel.test(as.matrix(sim), as.matrix(dis2)) 
+```
