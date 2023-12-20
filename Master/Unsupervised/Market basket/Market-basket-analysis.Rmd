@@ -1,0 +1,273 @@
+---
+title: "Market basket analysis"
+author: "Sugarbayar Enkhbayar"
+date: "2/10/2023"
+output:
+  pdf_document: default
+  html_document: default
+  word_document: default
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+## Introduction
+I used market basket analysis with student performance data from 2 schools in Portugal to find out what factors influence whether students pass or not final exam. In other words, I selected student pass or fail data as rhs. And I selected student other profile information as lhs.
+
+## Packages
+```{r eval=T,warning=F,message=F}
+library(readr)
+library(tidyverse)
+library(arules)
+library(arulesViz)
+```
+
+## Data preparetion
+Firstly, I imported data from machine learning repository website. I removed X rownumber variable from data.
+Then, I added column names to values to make result of association rule easier to interpret. 
+```{r eval=T,warning=F,message=F}
+df=read.csv("df.csv")
+df=df %>% select(-X)
+data=df
+for (i in 1:31) {
+  x=colnames(df)[i]
+  df[,i]<-paste0(x,'-',df[,i])
+}
+head(df)
+```
+
+## Exploratory Data Analysis {.tabset}
+
+### Variable identification
+
+Age, absences variables has many unique values and It is hard to explain. So it was removed from original data. Then, df1 is our final dataset to use in market basket analysis. 
+We have 28 variables as lefthandside, and 1 variable as righthandside.
+
+Left hand sides:
+
+* 1.school - student's school (binary: 'GP' - Gabriel Pereira or 'MS' - Mousinho da Silveira)
+* 2.sex - student's sex (binary: 'F' - female or 'M' - male)
+* 3.address - student's home address type (binary: 'U' - urban or 'R' - rural)
+* 4.famsize - family size (binary: 'LE3' - less or equal to 3 or 'GT3' - greater than 3)
+* 5.Pstatus - parent's cohabitation status (binary: 'T' - living together or 'A' - apart)
+* 6.Medu - mother's education (numeric: 0 - none, 1 - primary education (4th grade), 2 - 5th to 9th grade, 3 - secondary education or 4 - higher education)
+* 7.Fedu - father's education (numeric: 0 - none, 1 - primary education (4th grade), 2 - 5th to 9th grade, 3 - secondary education or 4 - higher education)
+* 8.Mjob - mother's job (nominal: 'teacher', 'health' care related, civil 'services' (e.g. administrative or police), 'at_home' or 'other')
+* 9.Fjob - father's job (nominal: 'teacher', 'health' care related, civil 'services' (e.g. administrative or police), 'at_home' or 'other')
+* 10.reason - reason to choose this school (nominal: close to 'home', school 'reputation', 'course' preference or 'other')
+* 11.guardian - student's guardian (nominal: 'mother', 'father' or 'other')
+* 12.traveltime - home to school travel time (numeric: 1 - <15 min., 2 - 15 to 30 min., 3 - 30 min. to 1 hour, or 4 - >1 hour)
+* 13.studytime - weekly study time (numeric: 1 - <2 hours, 2 - 2 to 5 hours, 3 - 5 to 10 hours, or 4 - >10 hours)
+* 14.failures - number of past class failures (numeric: n if 1<=n<3, else 4)
+* 15.schoolsup - extra educational support (binary: yes or no)
+* 16.famsup - family educational support (binary: yes or no)
+* 17.paid - extra paid classes within the course subject (Math or Portuguese) (binary: yes or no)
+* 18.activities - extra-curricular activities (binary: yes or no)
+* 19.nursery - attended nursery school (binary: yes or no)
+* 20.higher - wants to take higher education (binary: yes or no)
+* 21.internet - Internet access at home (binary: yes or no)
+* 22.romantic - with a romantic relationship (binary: yes or no)
+* 23.famrel - quality of family relationships (numeric: from 1 - very bad to 5 - excellent)
+* 24.freetime - free time after school (numeric: from 1 - very low to 5 - very high)
+* 25.goout - going out with friends (numeric: from 1 - very low to 5 - very high)
+* 26.Dalc - workday alcohol consumption (numeric: from 1 - very low to 5 - very high)
+* 27.Walc - weekend alcohol consumption (numeric: from 1 - very low to 5 - very high)
+* 28.health - current health status (numeric: from 1 - very bad to 5 - very good)
+
+Right hand sides:
+
+* 1.final - (success, fail)
+```{r eval=T,warning=F,message=F}
+df<-df %>% select(-age,-absences)
+write.csv(df,"df1.csv",row.names = F)
+colnames(df)
+```
+### Missing values treatment
+There is no missing value.
+```{r eval=T,warning=F,message=F}
+sapply(df,function(x)sum(is.na(x)))
+```
+### Central Tendency
+We have 649 observations. There are statistics of numeric variables. Studytime and freetime variables are almost normal distribution. But these are categorical variables. So it is not efficient way to see statistics. So let's see them as plot.
+```{r eval=T,warning=F,message=F}
+library(e1071)
+library(moments)
+tb=data %>% select(Medu,Fedu,traveltime,studytime,failures,famrel,freetime,goout,Dalc,Walc,health)
+summary(tb)
+tibble(
+    Column   = names(tb),
+    Variance = purrr::map_dbl(tb, var),
+    SD       = purrr::map_dbl(tb, sd),
+    IQR      = purrr::map_dbl(tb,IQR),
+    SKW      = purrr::map_dbl(tb,skewness),
+    KRT      = purrr::map_dbl(tb,kurtosis))
+```
+### Visualization of EDA
+
+There are some result from below graphics. 
+
+* Mother and Father's education level's median is similar 2. But mothers have more education level.
+* The most students spend less than 15 minut from school to home.The most students spend 2 -5 hours to study in one week.
+* Most student has good or excellent quality of family relationship. Unfortunatelly, there are a few students who has bad quality of family relationship.
+* Most students has average free time after school and average go out with friends.
+* Most students don't use alcohol during workday. But some students use alcohol during weekend. Also, all students has good health status. 
+```{r eval=T,warning=F,message=F}
+par(mfrow = c(2,2)) # two rows, one column
+boxplot(data$Medu,data$Fedu,names = c('Medu','Fedu'))
+boxplot(data$traveltime,data$studytime,data$failures,names=c("traveltime",'studytime','failures'))
+boxplot(data$famrel,names=c('famrel'))
+boxplot(data$freetime,data$goout,data$Dalc,data$Walc,data$health,names=c("freetime",'goout','Dalc','Walc','health'))
+```
+
+## Manually categorised {.tabset}
+In this section, we do market basket analysis with manually categorised data. Data has 650 itemsets and 126 items. 
+Top 5 most frequent items are paid-no,schoolsup-no, higher-yes, Pstatus-T,failures-0.
+
+* Paid-no: no extra paid classes with in the course subject.
+* Schoolsup-no: no extra educational support
+* Higher-yes: wants to take higher education
+* Pstatus-T: living together with parents
+* Failures-0: most students didn't fail any lesson
+
+I removed rare observations that has higher itemFrequency than 0.05. After it, I have 87 items. Let's see most high itemFrequency 15 itemsets as barchart.
+```{r eval=T,warning=F,message=F}
+trans=read.transactions("df1.csv",format='basket',sep=",",skip=0)
+summary(trans)
+# cleaning the data from rare observations
+trans1=trans[,itemFrequency(trans)>0.05]
+trans1
+# we can get all levels in dataset and their frequency
+sort(itemFrequency(trans1, type="relative"),decreasing = T)  
+itemFrequencyPlot(trans1,type='relative',topN=15)
+```
+
+### RHS - student who passed the final exam
+In order to see profile of students who are passed final exam, we have to use apriori method. I choose minimum support level 0.1, and minimum confidence level 0.5. Also, righthandside is 'final-success'. After training model, I sorted result of model by decreasing lift.
+
+* Model has 116034 rules
+* rule length distribution is up to 10
+* Model's support is 0.1 and confidence is 0.5
+* We can see top 15 result of our model. let's explain first one. If we see somebody who successfully passed final exam, she lives in urban,she didn't fail any exams, no romantic relationship, study in GP school, no extra educational support, and she is female. support is 0.13. And this case's frequency of features combination in dataset is 13 percentage. Confidence is 1. It means that for sure (100%). Also, lift is 1.43 and it is higher than 1. It means that we see features appearing together more often than separately.
+* Consider the second lhs. If we see somebody who successfully passed final exam, she is female, she has no extra educational support, she study in GP school, she wants to take higher education, her family support her, she didn't fail any course, she has no extra-curricular activities.
+```{r eval=T,warning=F,message=F}
+rules<-apriori(data=trans1, parameter=list(supp=0.1,conf = 0.5), 
+                       appearance=list(default="lhs", rhs='final-success'), control=list(verbose=F))
+rules.clean<-rules
+rules.final<-sort(rules.clean, by="lift", decreasing=TRUE)
+summary(rules.final)
+rules.final<-sort(rules.final, by="lift", decreasing=TRUE)
+inspect(head(rules.final,15))
+plot(head(rules.final,10), method="graph", engine="htmlwidget") # 
+aff.items<-dissimilarity(trans1, which="items", method="affinity")
+hc<-hclust(aff.items, method="ward.D2")
+plot(hc, main="Dendrogram for Items") 
+```
+
+### RHS - student who failed the final exam
+In order to see profile of students who are failed the final exam, we use apriori method. I choose minimum support level 0.1, and minimum confidence level 0.5. Also, right hand side is 'final-fail'. I sorted result of model by decreasing lift.
+
+* Model has 32 rules
+* rule length distribution is from 3 to 6
+* Model’s support is 0.1 and confidence is 0.5
+* We can see top 10 result of our model. let’s explain first one. If we see somebody who failed final exam, he/she choose this school because of courses, he/she study in MS school, and he/she no extra educational support. Support is 0.1. And this case’s frequency of features combination in dataset is 10 percentage. Confidence is 0.57. It means that for sure (57%). Also, lift is 1.91 and it is higher than 1. It means that we see features appearing together more often than separately.
+* Let's explain the third lhs. If we see somebody who failed final exam, he/she study in MS school, his/her guardian is his/her mother, he/she no extra paid classes within the course subject , he/she lives together with her parents.
+```{r eval=T,warning=F,message=F}
+rules<-apriori(data=trans1, parameter=list(supp=0.1,conf = 0.5), 
+               appearance=list(default="lhs", rhs='final-fail'), control=list(verbose=F))
+rules.clean<-rules
+rules.final<-sort(rules.clean, by="lift", decreasing=TRUE)
+summary(rules.final)
+rules.final<-sort(rules.final, by="lift", decreasing=TRUE)
+inspect(head(rules.final,10))
+plot(head(rules.final,10), method="graph", engine="htmlwidget") # 
+aff.items<-dissimilarity(trans1, which="items", method="affinity")
+hc<-hclust(aff.items, method="ward.D2")
+plot(hc, main="Dendrogram for Items") 
+```
+
+
+## Automatically categorised {.tabset}
+In order to do market basket analysis with automatically categorised data, we need to convert all datas to factor.
+
+### RHS - student who passed the final exam
+We have 452 dataset and we can see summary of them. I removed rare observations that has higher itemFrequency than 0.05. I choose minimum support level 0.1, and minimum confidence level 0.5.
+
+* We have 36813 rules
+* rule length distributions are from 1 to 5
+* 2nd lhs: If we see who successfully passed final exam, who wants to take higher education
+* 3rd lhs: If we see who successfully passed final exam, who didn't fail any exams
+* 5th lhs: If we see who successfully passed final exam, who wants to take higher education and who didn't fail any exam.
+
+```{r eval=T,warning=F,message=F}
+library(arulesCBA)
+trans2=df
+for (i in 1:29) {
+  trans2[,i]<-factor(trans2[,i],levels = unique(trans2[,i]))
+}
+trans21=trans2 %>% filter(final=='final-success')
+data.disc=discretizeDF.supervised(data=trans21,final~.,methods = 'chi2')
+summary(data.disc)
+data.trans<-transactions(data.disc)
+trans2<-data.trans[, itemFrequency(data.trans)>0.05]
+data.ass<-mineCARs(final~ ., transactions=trans2, support=0.1, confidence=0.5)
+data.ass=sort(data.ass,by='support',decreasing = TRUE)
+summary(data.ass)
+inspect(head(data.ass,20))
+```
+
+### RHS - student who failed the final exam
+We have 197 dataset and we can see summary of them. I removed rare observations that has higher itemFrequency than 0.05. I choose minimum support level 0.1, and minimum confidence level 0.5.
+
+* We have 30188 rules
+* rule length distributions are from 1 to 5
+* 2nd lhs: If we see who failed final exam, who don't take extra paid classes within the course subject
+* 3rd lhs: If we see who failed final exam, who don't have extra educational support
+* 4th lhs: If we see who failed final exam, who lives together with parents.
+* 5th lhs: If we see who failed final exam, who don't take extra paid classes within the course subject and who don't have extra educational support.
+
+```{r eval=T,warning=F,message=F}
+library(arulesCBA)
+trans2=df
+for (i in 1:29) {
+  trans2[,i]<-factor(trans2[,i],levels = unique(trans2[,i]))
+}
+trans22=trans2 %>% filter(final=='final-fail')
+data.disc=discretizeDF.supervised(data=trans22,final~.,methods = 'chi2')
+summary(data.disc)
+data.trans<-transactions(data.disc)
+trans2<-data.trans[, itemFrequency(data.trans)>0.05]
+data.ass<-mineCARs(final~ ., transactions=trans2, support=0.1, confidence=0.5)
+data.ass=sort(data.ass,by='support',decreasing = TRUE)
+summary(data.ass)
+inspect(head(data.ass,20))
+```
+
+## Conclusion
+
+Student with the following characteristics has successfully passed the final exam.
+
+* female
+* lives in urban
+* no romantic relationship
+* study in GP school
+* wants to take higher education
+* her family support him
+* didn't fail any exams
+
+However, Students with the following characteristics failed to pass the final exam.
+
+* study in MS school* no extra paid classes with in the course subject
+* no extra educational support
+
+```{r eval=T,warning=F,message=F}
+
+```
+
+
+
+
+
+
+
+
+
+
