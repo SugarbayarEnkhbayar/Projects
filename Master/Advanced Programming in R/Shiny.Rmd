@@ -1,0 +1,144 @@
+---
+title: "Shiny"
+output: html_document
+date: "2023-05-07"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+
+
+--------------------------------------------------------------------------------
+
+Data Cleaning - Main Class
+
+```{r}
+setClass(
+  "DataCleaning",
+  slots = list(
+    data = "data.frame"
+  )
+)
+```
+
+1. Task of Importing Dataset
+
+```{r}
+# Define the class for importing data
+setClass("DataImport",
+         contains = "DataCleaning",
+         slots = list(data = "data.frame", 
+                      file_path = "character"))
+
+# Define the method for importing data from a CSV file
+setGeneric("importFromCSV",
+           function(object, ...) {
+             standardGeneric("importFromCSV")
+           })
+
+setMethod("importFromCSV",
+          signature(object = "DataImport"),
+          function(object, ...) {
+            data <- read.csv(file = object@file_path, ...)
+            new("DataImport", data = data, file_path = object@file_path)
+          })
+
+# Define the method for importing data from an Excel file
+setGeneric("importFromExcel",
+           function(object, ...) {
+             standardGeneric("importFromExcel")
+           })
+
+setMethod("importFromExcel",
+          signature(object = "DataImport"),
+          function(object, sheet_name = 1, ...) {
+            data <- readxl::read_excel(path = object@file_path, sheet = sheet_name, ...)
+            new("DataImport", data = data, file_path = object@file_path)
+          })
+```
+
+1.1 Task of Importing Data set in Shiny R
+
+
+```{r}
+library(shiny)
+library(readxl)
+
+# UI for the app
+ui <- fluidPage(
+  titlePanel("Automated Data Cleaning Dashboard"),
+  sidebarLayout(
+    sidebarPanel(
+      fileInput("fileInput", label = "Select a file to import:"),
+      selectInput("fileType", label = "File type:", choices = c("csv", "excel"), selected = "csv")
+    ),
+    mainPanel(
+      tableOutput("dataPreview")
+    )
+  )
+)
+
+
+# Source the R file containing the DataImport class and its methods
+#source("data_import.R")
+
+# Define the server function for the app
+server <- function(input, output) {
+  
+  # Import the data based on the selected file type
+  dataImport <- reactive({
+    if(input$fileType == "csv") {
+      file <- input$fileInput
+      if(is.null(file)) {
+        return(NULL)
+      }
+      
+      data <- new("DataImport", file_path = file$datapath)
+      imported_data <- importFromCSV(data)
+      return(imported_data)
+    } else if(input$fileType == "excel") {
+      file <- input$fileInput
+      if(is.null(file)) {
+        return(NULL)
+      }
+      data <- new("DataImport", file_path = file$datapath)
+      imported_data <- importFromExcel(data)
+      return(imported_data)
+    }
+  })
+  
+  # Show a preview of the imported data
+  output$dataPreview <- renderTable({
+    if(!is.null(dataImport())) {
+      dataImport()@data
+    }
+  })
+}
+
+
+# Run the app
+shinyApp(ui = ui, server = server)
+
+```
+
+In this app, the fileInput widget allows the user to select a file from their computer, and the selectInput widget allows the user to choose between CSV or Excel files. When the user selects a file and a file type, the dataImport reactive expression calls either importFromCSV or importFromExcel based on the file type, and returns the resulting dataset. The renderTable function displays a preview of the dataset in the main panel of the app.
+
+Note that you'll need to replace the data_import.R file path in the source function with the actual file path to the R file that defines the DataImport class and its methods. You'll also need to make sure that the readxl package is installed and loaded in the R environment.
+
+
+
+```{r}
+# Create an instance of the DataImport class for a CSV file
+csv_file <- new("DataImport", file_path = "client_attrition_train.csv")
+imported_data <- importFromCSV(csv_file)
+str(imported_data)
+```
+

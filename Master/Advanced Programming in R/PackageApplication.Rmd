@@ -1,0 +1,54 @@
+---
+title: "Package Application"
+output: html_document
+date: "2023-05-25"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+install.packages("readr")
+install.packages("datacleaningtoolbox")
+
+library(readr)
+library(datacleaningtoolbox)
+```
+
+
+```{r}
+dataset <- read_csv("C:/Users/User/OneDrive/Desktop/Advanced R/Advanced R Projects/client_attrition_train.csv")
+str(dataset)
+colSums(is.na(dataset))
+```
+
+```{r}
+# create an instance of the MissingValuesHandler class
+mv_handler <- new("DataCleaning" , data = dataset)
+colSums(is.na(dataset))
+```
+
+```{r}
+# fill missing values
+mv_handler_filled <- handleMissingValues(mv_handler, method = "fill")
+colSums(is.na(mv_handler_filled))
+```
+
+```{r}
+# remove missing values
+mv_handler_removed <- handleMissingValues(mv_handler, method = "remove")
+colSums(is.na(mv_handler_removed))
+```
+
+```{r}
+# create an instance of the OutlierRemover class
+or_remover <- new("DataCleaning", data = mv_handler_removed)
+colSums(is.na(mv_handler_removed))
+
+# remove outliers using z-score method with threshold of 3
+or_remover_removed <- removeOutliers(or_remover, method = "z-score", threshold = 2)
+```
+
+

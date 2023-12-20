@@ -1,0 +1,892 @@
+---
+title: "Data Cleaning Classes & Functions"
+output: html_document
+date: "2023-05-06"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+-----------------------------------------------------------------------
+
+# OOP (using S4 system in R)
+
+```{r}
+library(pryr)
+library(dplyr)
+```
+
+
+# Main Class: 
+
+The class name is "DataCleaning", and it has two slots defined: "data" and "tbl_data".
+
+The data slot is defined as a "data.frame" object in order to store tabular data.
+
+By defining the slot, we are specifying the structure and types of data that an object of the "DataCleaning" class can hold.
+
+
+```{r}
+setClass(
+  "DataCleaning",
+  slots = list(
+    data = "data.frame"
+  )
+)
+```
+
+To be more flexible, the validity method has been added to include the additional valid classes ("spec_tbl_df" and "tbl") for the "data" slot. The valid_classes vector contains all the valid class names for the slot.
+
+The modified validity method checks if the object assigned to the "data" slot inherits from any of the valid classes specified in valid_classes. If the assigned object is not one of the valid classes, the method returns an error message indicating that the "data" slot must be a data frame, tbl_df, spec_tbl_df, or tbl object.
+
+With this modification, the "data" slot in the "DataCleaning" class can accept objects that are data frames, tbl_df objects, spec_tbl_df objects, or tbl objects.
+
+```{r}
+DataCleaning <- setClass(
+  "DataCleaning",
+  slots = list(
+    data = "ANY"
+  ),
+  validity = function(object) {
+    valid_classes <- c("data.frame", "tbl_df", "spec_tbl_df", "tbl")
+    
+    if (!inherits(object@data, valid_classes)) {
+      "The 'data' slot must be a data frame, tbl_df, spec_tbl_df, or tbl object."
+    } else {
+      TRUE
+    }
+  }
+)
+```
+
+```{r}
+DataCleaning
+```
+
+
+## 1. Handling Missing values: 
+
+### First, we can define a class for handling missing values:
+
+#### This class takes a data frame as input and has a method called handleMissingValues that can either remove or fill missing values. The remove method simply removes rows with missing values, while the fill method replaces missing values with the mean of the corresponding column. The code first identifies the numeric columns using the sapply function and the is.numeric function. It then loops over each of the numeric columns and checks whether it contains any missing values using the any function and the is.na function. If a column contains missing values, the mean value of the column is calculated using the mean function with the na.rm parameter set to TRUE, and the missing values in the column are replaced with the mean value using the [<- operator.
+
+```{r}
+#setClass("MissingValuesHandler", slots = c(data = "data.frame"))
+
+setGeneric("handleMissingValues", function(object, ...) {
+  standardGeneric("handleMissingValues")
+})
+
+setMethod("handleMissingValues", "DataCleaning", function(object, method = "remove", ...) {
+  if (method == "remove") {
+    object@data[is.na(object@data)] <- NA
+    object@data[complete.cases(object@data), ]
+  } else if (method == "fill") {
+    num_cols <- sapply(object@data, is.numeric)
+    for (col in names(object@data)[num_cols]) {
+      if (any(is.na(object@data[[col]]))) {
+        mean_val <- mean(object@data[[col]], na.rm = TRUE)
+        object@data[[col]][is.na(object@data[[col]])] <- mean_val
+      }
+    }
+    object@data
+  } else {
+    stop("Invalid method.")
+  }
+})
+
+```
+
+
+```{r}
+showMethods("handleMissingValues")
+args("handleMissingValues")
+``` 
+
+```{r}
+library(readr)
+dataset <- read_csv("C:/Users/User/OneDrive/Desktop/Advanced R/Advanced R Projects/client_attrition_train.csv")
+str(dataset)
+colSums(is.na(dataset))
+```
+```{r}
+class(dataset)
+```
+
+# Here is an example usage of the class:
+
+```{r}
+# create an instance of the MissingValuesHandler class
+mv_handler <- DataCleaning(data = dataset)
+colSums(is.na(dataset))
+```
+
+```{r}
+# fill missing values
+mv_handler_filled <- handleMissingValues(mv_handler, method = "fill")
+colSums(is.na(mv_handler_filled))
+```
+
+```{r}
+# remove missing values
+mv_handler_removed <- handleMissingValues(mv_handler, method = "remove")
+colSums(is.na(mv_handler_removed))
+```
+
+---------------------------------------------------------------------------------
+
+# 2. Removing outliers:
+
+#Next, we can define a class for removing outliers:
+
+### This class takes a data frame as input and has a method called removeOutliers that can use z-score method to remove outliers. The threshold parameter sets the z-score threshold for identifying outliers.
+
+This code identifies the columns with numeric observations and applies the z-score method only on those columns, while ignoring the non-numeric columns:
+
+```{r}
+# setClass("OutlierRemover", slots = c(data = "data.frame"))
+
+setGeneric("removeOutliers", function(object, ...) {
+  standardGeneric("removeOutliers")
+})
+
+setMethod("removeOutliers", "DataCleaning", function(object, method = "z-score", threshold = 3, ...) {
+  if (method == "z-score") {
+    # identify numeric columns
+    numeric_cols <- sapply(object@data, is.numeric)
+    
+    if (sum(numeric_cols) == 0) {
+      stop("No numeric columns found.")
+    }
+    
+    # calculate z-scores for numeric columns
+    z_scores <- apply(object@data[, numeric_cols], 2, function(x) abs(scale(x)))
+    
+    # identify outliers based on z-score threshold
+    outliers <- rowSums(z_scores > threshold) > 0
+    
+    # remove outliers from numeric columns
+    cleaned_data <- object@data[!outliers, numeric_cols]
+    
+    # print number of outliers removed for each numeric column
+    for (i in seq_along(numeric_cols)) {
+      if (numeric_cols[i]) {
+        col_name <- names(object@data)[i]
+        num_outliers <- sum(outliers)
+        cat(sprintf("Removed %d outliers from column '%s'\n", num_outliers, col_name))
+      }
+    }
+    
+    cleaned_data
+  } else {
+    stop("Invalid method.")
+  }
+})
+
+
+```
+
+The sapply() function is used to identify the columns with numeric observations by applying the is.numeric() function to each column. The resulting logical vector is stored in the numeric_cols variable. The z-scores are then calculated only for the columns where numeric_cols is TRUE using the [ subsetting operator. Finally, the outliers are removed only from the numeric columns using the same subsetting operator.
+
+Note that this modified code assumes that any non-numeric columns should be ignored. If you have non-numeric columns that you want to include in the analysis, you'll need to modify the code accordingly.
+
+
+# Here is an example usage of the class:
+
+```{r}
+# create an instance of the OutlierRemover class
+or_remover <- new("DataCleaning", data = mv_handler_removed)
+colSums(is.na(mv_handler_removed))
+
+# remove outliers using z-score method with threshold of 3
+or_remover_removed <- removeOutliers(or_remover, method = "z-score", threshold = 2)
+
+```
+
+
+----------------------------------------------------------------------
+
+
+# 3. converting data types in the dashboard:
+
+# First, we will define a class for handling data type conversions:
+
+This class has three slots: "data" to store the input dataset, "from_type" to store the current data type of the column that needs to be converted, and "to_type" to store the desired data type.
+
+```{r}
+setClass("DataTypeConversion",
+         representation(
+           data = "data.frame",
+           from_type = "character",
+           to_type = "character"
+           ),
+         prototype(
+           data = data.frame(),
+           from_type = "",
+           to_type = ""
+           )
+         )
+```
+
+
+# Next, we will define a method for this class to perform the data type conversion:
+
+```{r}
+setGeneric("convertDataType", function(object, ...) {
+  standardGeneric("convertDataType")
+})
+
+setMethod("convertDataType", signature("DataTypeConversion"),
+  function(object) {
+    colnames <- colnames(object@data)
+    col_idx <- which(colnames == object@from_type)
+    if (length(col_idx) == 0) {
+      warning("Column not found.")
+      return(object@data)
+    }
+    object@data[[col_idx]] <- as(object@data[[col_idx]], object@to_type)
+    return(object@data)
+  }
+)
+
+```
+
+
+## This method takes an object of the "DataTypeConversion" class as input and converts the column specified in the "from_type" slot to the data type specified in the "to_type" slot.
+
+Finally, we will create an instance of the "DataTypeConversion" class and call the "convertDataType" method:
+
+
+```{r}
+conversion <- new("DataTypeConversion", data = dataset, from_type = "character", to_type = "numeric")
+new_data <- convertDataType(conversion)
+```
+
+```{r}
+# Create a sample data frame
+df <- data.frame(
+  name = c("Alice", "Bob", "Charlie"),
+  age = c(25, 30, 35),
+  income = c(50000, 60000, 70000)
+)
+
+# Create a DataTypeConversion object to convert the "age" column to character
+conversion <- new("DataTypeConversion", data = df, from_type = "numeric", to_type = "character")
+conversion@from_type <- "age"
+
+# Apply the conversion
+df_converted <- convertDataType(conversion)
+
+# Print the original and converted data frames
+print(df)
+print(df_converted)
+```
+
+
+
+# This code reads in an example dataset, creates an instance of the "DataTypeConversion" class with the input dataset and the desired data type conversion, and calls the "convertDataType" method to perform the conversion. The resulting converted dataset is stored in the "new_data" variable.
+
+
+------------------------------------------------------------------------
+
+# 4. Data cleaning task of standardizing data
+
+##
+
+Here, we define a new class called "DataStandardization" with one slot called "data" of class "data.frame". We also set the default value for the "data" slot to an empty data frame.
+Here is an example implementation:
+
+
+```{r}
+setClass("DataStandardization",
+        slots = list(data = "data.frame"),
+        prototype = list(data = data.frame()))
+```
+
+Here, we define a generic function called "standardize" that takes an object of any class and dispatches the appropriate method based on the class of the object. We then define a method for the "DataStandardization" class that standardizes the data by scaling it and returning a new data frame.
+
+Finally, we can create an instance of the "DataStandardization" class and use the "standardize" method to standardize the data:
+
+
+```{r}
+setGeneric("standardize",
+           function(object, ...) {
+             standardize(object)
+           })
+
+setMethod("standardize",
+          signature = "DataStandardization",
+          definition = function(object) {
+            scaled_data <- scale(object@data, center = TRUE, scale = TRUE)
+            standardized_data <- as.data.frame(scaled_data)
+            return(standardized_data)
+          })
+
+```
+
+
+
+```{r}
+# setClass("DataStandardization",
+         #slots = list(data = "data.frame"),
+        # prototype = list(data = data.frame()))
+
+setGeneric("standardize",
+           function(object, ...) {
+             standardize(object)
+           })
+
+setMethod("standardize",
+          signature = "DataCleaning",
+          definition = function(object) {
+            numerical_cols <- sapply(object@data, is.numeric)
+            numerical_data <- object@data[, numerical_cols]
+            if (ncol(numerical_data) == 0) {
+              stop("No numerical columns found in data")
+            }
+            scaled_data <- scale(numerical_data, center = TRUE, scale = TRUE)
+            standardized_data <- data.frame(scaled_data)
+            non_numerical_data <- object@data[, !numerical_cols]
+            if (ncol(non_numerical_data) > 0) {
+              standardized_data <- cbind(standardized_data, non_numerical_data)
+            }
+            return(standardized_data)
+          })
+
+```
+
+```{r}
+# Create an instance of the DataCleaning class
+ds <- new("DataCleaning", data = dataset)
+
+# Standardize the data
+std_data <- standardize(ds)
+
+# View the standardized data
+head(std_data)
+
+```
+
+
+Here, we create an instance of the "DataStandardization" class with the "iris" data set as the default value for the "data" slot. We then use the "standardize" method to standardize the data, which returns a new data frame containing the standardized data. We can then view the first few rows of the standardized data using the head function.
+
+
+# Imporved version of Standardization
+
+```{r}
+setGeneric("standardize",
+           function(object, column = NULL, ...) {
+             standardize(object, column)
+           })
+
+setMethod("standardize",
+          signature = "DataCleaning",
+          definition = function(object, column = NULL) {
+            numerical_cols <- sapply(object@data, is.numeric)
+            if (!is.null(column)) {
+              numerical_cols <- numerical_cols & colnames(object@data) %in% column
+            }
+            numerical_data <- object@data[, numerical_cols]
+            if (sum(numerical_cols) == 0) {
+              stop("No numerical columns found in data")
+            }
+            scaled_data <- scale(numerical_data, center = TRUE, scale = TRUE)
+            standardized_data <- data.frame(scaled_data)
+            non_numerical_cols <- object@data[, !numerical_cols]
+            if (sum(!numerical_cols) > 0) {
+              standardized_data <- cbind(standardized_data, non_numerical_cols)
+            }
+            return(standardized_data)
+          })
+
+
+
+```
+
+
+
+```{r}
+# Create an example data frame
+data <- data.frame(
+  var1 = c(1, 2, 3, 4, 5),
+  var2 = c(6, 7, 8, 9, 10),
+  var3 = c(11, 12, 13, 14, 15),
+  var4 = c(16, 17, 18, 19, 20)
+)
+
+# Create an instance of the DataCleaning class
+cleaner <- new("DataCleaning", data = data)
+
+# Standardize all numerical columns
+standardize(cleaner)
+
+# Standardize only var1 and var3 columns
+standardize(cleaner, column = c("var1"))
+```
+
+
+---------------------------------------------------------------------
+
+# 5. Data Cleaning Task for Anomalies
+
+```{r}
+#setClass("DataAnomalies",
+         #representation(
+           #data = "data.frame"
+          # ),
+         #prototype(
+           #data = data.frame()
+           #))
+
+
+setGeneric("handleAnomalies",
+           function(object, ...) {
+             standardGeneric("handleAnomalies")
+           })
+
+setMethod("handleAnomalies",
+          "DataCleaning",
+          function(object, action = "remove", columns = NULL) {
+            if (action == "remove") {
+              if (is.null(columns)) {
+                object@data <- unique(object@data)
+              } else {
+                object@data <- unique(object@data[, !colnames(object@data) %in% columns])
+              }
+            } else if (action == "correct") {
+              # Code to correct anomalies
+            } else {
+              stop("Invalid action specified")
+            }
+            
+            return(object)
+          })
+
+```
+
+
+#we define the DataAnomalies class with a single representation: a data.frame containing the data with anomalies. We also define a generic function handleAnomalies that takes an object of class DataAnomalies as its first argument, along with optional arguments specifying the action to take (remove or correct anomalies) and the columns to remove. We then define a method for handleAnomalies that operates on DataAnomalies objects. This method uses the unique function to remove duplicates from the data, either across all columns or only those specified by the columns argument. If the action argument is set to "correct", additional code can be added to correct anomalies. Finally, the method returns the updated DataAnomalies object.
+
+Here is an example: 
+
+```{r}
+# Create a data frame with some anomalies
+df <- data.frame(
+  name = c("Alice", "Bob", "Alice", "Charlie", "Bob"),
+  age = c(25, 30, 25, 35, 30),
+  salary = c(50000, 60000, 50000, 70000, 60000)
+)
+
+# Create a DataAnomalies object
+anomalies <- new("DataCleaning", data = df)
+
+# Remove duplicated rows
+anomalies_removed <- handleAnomalies(anomalies, action = "remove")
+
+# Remove the "name" column
+anomalies_corrected <- handleAnomalies(anomalies, action = "remove", columns = "name")
+
+print(anomalies_removed)
+print(anomalies_corrected)
+```
+
+-----------------------------------------------------------------------
+
+# 6. Data cleaning task of removing unnecessary columns
+
+we can create a new class called "ColumnRemoval" that contains the necessary data and methods for performing this task.
+
+First, we define the class and its slots:
+
+
+```{r}
+# Define the ColumnRemoval class
+setClass("ColumnRemoval", 
+         contains = "DataCleaning",
+         slots = list(data = "data.frame",
+                      columns_to_remove = "character"))
+
+# Define the removeColumns method for the ColumnRemoval class
+setGeneric("removeColumns",
+           function(object) {
+             standardGeneric("removeColumns")
+           })
+
+setMethod("removeColumns",
+          signature = "ColumnRemoval",
+          definition = function(object) {
+            object@data[, !(colnames(object@data) %in% object@columns_to_remove)]
+          })
+```
+
+
+This method takes the "data" and "columns" arguments and assigns them to the corresponding slots of the new object.
+
+Next, we define the "clean" method, which will remove the specified columns from the dataset:
+
+```{r}
+# Create an instance of the ColumnRemoval class
+# create example dataset
+data <- data.frame(a = c(1, 2, 3),
+                   b = c(4, 5, 6),
+                   c = c(7, 8, 9))
+
+
+remover <- new("ColumnRemoval", data = data, columns_to_remove = c("b", "c"))
+
+# Call the removeColumns method to remove the specified columns
+cleaned_data <- removeColumns(remover)
+cleaned_data
+```
+In this example, we create a dataset with three columns and then create a "ColumnRemoval" object with the "b" and "c" columns specified for removal. We then call the "clean" method to remove these columns and print the resulting dataset.
+
+
+Another example (Applied to our dataset):
+
+```{r}
+dataset_2 <- new("ColumnRemoval", data = dataset, columns_to_remove = "customer_id")
+
+cleaned_data_2 <- removeColumns(dataset_2)
+cleaned_data_2
+```
+
+
+
+-----------------------------------------------------------------------
+
+
+# 7.  task of renaming columns
+
+
+we can create a new class called "ColumnRenaming" that will contain the necessary data structures and methods. Here's an example implementation:
+
+
+```{r}
+setClass("ColumnRenaming",
+         contains = "DataCleaning",
+         representation(
+           data = "data.frame", # input dataset
+           old_names = "character", # vector of old column names
+           new_names = "character" # vector of new column names
+         ),
+         prototype(
+           data = data.frame(),
+           old_names = character(),
+           new_names = character()
+         )
+)
+
+setGeneric("renameColumns",
+           function(object, old_colname, new_colname) {
+             standardGeneric("renameColumns")
+           })
+
+setMethod("renameColumns", "ColumnRenaming",
+          function(object, old_colname, new_colname) {
+            old_col_index <- match(old_colname, colnames(object@data))
+            if(is.na(old_col_index)) {
+              stop(paste("Column", old_colname, "not found in dataset."))
+            }
+            object@new_names[old_col_index] <- new_colname
+            colnames(object@data)[old_col_index] <- new_colname
+            return(object@data)
+          })
+
+```
+Example: 
+
+```{r}
+# Create a data frame
+df <- data.frame(
+  Name = c("Alice", "Bob", "Charlie"),
+  Age = c(25, 30, 35),
+  Gender = c("Female", "Male", "Male"),
+  Salary = c(50000, 60000, 70000)
+)
+print(df)
+
+# Create an object of class "ColumnRenaming"
+cr <- new("ColumnRenaming",
+          data = df,
+          old_names = c("Age", "Salary"),
+          new_names = c("Years of Experience", "Annual Income"))
+
+# Rename the "Age" column to "Years of Experience"
+renameColumns(cr, "Age", "Years of Experience")
+print(df)
+
+# Rename the "Salary" column to "Annual Income"
+renameColumns(cr, "Salary", "Annual Income")
+print(df)
+
+```
+In this example, we first create a data frame "df" with four columns: "Name", "Age", "Gender", and "Salary". Then, we create an object of class "ColumnRenaming" called "cr" with the old column names "Age" and "Salary", and the new column names "Years of Experience" and "Annual Income", respectively.
+
+We then use the "renameColumns" method to rename the "Age" column to "Years of Experience" and print the updated data frame. Next, we use the same method to rename the "Salary" column to "Annual Income" and print the updated data frame again.
+
+As a result, we can see that the "Age" and "Salary" columns in the data frame are renamed to "Years of Experience" and "Annual Income", respectively, based on the object "cr" of class "ColumnRenaming".
+
+
+
+------------------------------------------------------------------------# 8. the task # 8. applying statistical tests
+
+we can create a new class called StatisticalTests. This class will have methods that will implement different statistical tests such as correlation, t-test, chi-squared test, etc.
+
+Here's an example of how the StatisticalTests class can be implemented using S4 system in R:
+
+
+```{r}
+#setClass("StatisticalTests",
+         #slots = c(data = "data.frame"))
+
+
+setGeneric("correlation",
+           function(object, ...) {
+             standardGeneric("correlation")
+           })
+
+setMethod("correlation", signature = "DataCleaning",
+          definition = function(object, var1, var2) {
+            corr <- cor(object@data[, var1], object@data[, var2])
+            return(corr)
+          })
+
+setGeneric("ttest",
+           function(object, ...) {
+             standardGeneric("ttest")
+           })
+
+
+setMethod("ttest", signature = "DataCleaning",
+          definition = function(object, var, group) {
+            t.test(object@data[, var] ~ object@data[, group])
+          })
+
+setGeneric("chisquared",
+           function(object, ...) {
+             standardGeneric("chisquared")
+           })
+
+setMethod("chisquared", signature = "DataCleaning",
+          definition = function(object, var1, var2) {
+            chisq.test(object@data[, var1], object@data[, var2])
+          })
+
+```
+
+
+
+```{r}
+# create some example data
+set.seed(123)
+data <- data.frame(
+  var1 = rnorm(100),
+  var2 = rnorm(100),
+  group = sample(c("A", "B"), size = 100, replace = TRUE),
+  cat1 = sample(c("Yes", "No"), size = 100, replace = TRUE),
+  cat2 = sample(c("Low", "Medium", "High"), size = 100, replace = TRUE)
+)
+
+# create an object of class StatisticalTests
+mydata <- new("DataCleaning", data = data)
+
+# calculate the correlation between var1 and var2
+correlation(mydata, "var1", "var2")
+
+# perform a t-test comparing var1 between groups A and B
+ttest(mydata, "var1", "group")
+
+# perform a chi-squared test of independence between cat1 and cat2
+chisquared(mydata, "cat1", "cat2")
+
+
+```
+
+
+
+In this example, we define the StatisticalTests class with a single slot called data, which will store the dataset. We also define methods for different statistical tests such as correlation, ttest, and chisquared. Each method takes in the StatisticalTests object, and the variables to perform the test on, and returns the test result.
+
+When a user selects a statistical test in the dashboard, the corresponding method can be called on the StatisticalTests object, passing in the necessary variables. This allows for modular and reusable code for statistical tests, making it easier to add new tests in the future.
+
+
+------------------------------------------------------------------------
+# 9. "Filter data" task
+
+we can create a new class called "DataFiltering" that contains the necessary methods and data structures. Here is an example implementation:
+
+
+```{r}
+# Define the DataFiltering class
+#setClass("DataFiltering",
+         #slots = c(data = "data.frame"),
+         #prototype = list(data = data.frame()))
+
+# Define the filterData method
+setGeneric("filterData",
+           function(object, column, value) {
+             standardGeneric("filterData")
+           })
+
+setMethod("filterData",
+          signature(object = "DataCleaning", column = "character", value = "ANY"),
+          function(object, column, value) {
+            object@data <- object@data[object@data[, column] == value, ]
+            object
+          })
+
+```
+
+
+In this example, we define a new class called "DataFiltering" with a single slot called "data" that stores the input dataset. We then define a generic function called "filterData" that takes an object of class "DataFiltering", the name of the column to filter on, and the desired value to filter for.
+
+We then define a method for the "filterData" function that is specific to the "DataFiltering" class. This method subsets the input dataset based on the specified column and value using standard R indexing, and returns a new "DataFiltering" object with the filtered data.
+
+We can then create an instance of the "DataFiltering" class and use the "filterData" method to filter the dataset based on a specific column and value:
+
+
+```{r}
+# Create a new instance of the DataFiltering class with some example data
+df <- data.frame(name = c("Alice", "Bob", "Charlie", "David"),
+                 age = c(25, 30, 35, 40),
+                 salary = c(50000, 60000, 70000, 80000))
+df_filter <- new("DataCleaning", data = df)
+
+# Print the original data
+#print(df_filter@data)
+
+# Filter the data based on age
+#df_filter <- filterData(df_filter, "age", 35)
+
+# Print the filtered data
+print(df_filter@data)
+
+# Filter the data based on salary
+df_filter <- filterData(df_filter, "salary", 60000)
+
+# Print the filtered data
+print(df_filter@data)
+
+```
+
+
+-----------------------------------------------------------------------
+
+# 10. "Group by" data cleaning task
+
+we can create a new S4 class called "GroupByCleaning" that inherits from the "DataCleaning" class. The "GroupByCleaning" class will have a method called "group_by" that performs the grouping operation on the dataset based on the specified columns and computes summary statistics.
+
+Here's an example code implementation:
+
+```{r}
+# Define the GroupByCleaning class
+setClass("GroupByCleaning", contains = "DataCleaning")
+
+# Define the group_by method
+setGeneric("group_by", function(object, group_cols, summary_cols) {
+  standardGeneric("group_by")
+})
+
+setMethod("group_by", signature(object = "GroupByCleaning", group_cols = "character", summary_cols = "character"),
+          function(object, group_cols, summary_cols) {
+            # Get the dataset from the parent class
+            data <- object@data
+            
+            # Group by the specified columns and compute the summary statistics
+            summary_data <- aggregate(data[,summary_cols], data[,group_cols], FUN = sum)
+            
+            # Return the cleaned dataset as a new object of the same class
+            new("GroupByCleaning", data = summary_data)
+          })
+
+```
+
+
+To use the "group_by" method, we can create an object of the "GroupByCleaning" class and call the method with the appropriate parameters:
+
+
+```{r}
+# Create a sample dataset
+sales_data <- data.frame(salesperson = c("John", "Mary", "John", "Mary"),
+                         region = c("East", "West", "East", "West"),
+                         date = c("2022-01-01", "2022-01-01", "2022-01-02", "2022-01-02"),
+                         sales_amount = c(100, 200, 150, 250))
+
+# Define a GroupByCleaning object with the sales data
+sales_clean <- new("GroupByCleaning", data = sales_data)
+
+# Group the sales data by region and date, and compute total sales amount
+sales_summary <- group_by(sales_clean, group_cols = c("region", "date"), summary_cols = "sales_amount")
+
+# View the summary data
+sales_summary@data
+
+```
+
+
+In this example, we first create a sample dataset sales_data. We then create a GroupByCleaning object sales_clean with this dataset.
+
+Next, we call the group_by method on sales_clean, specifying the group_cols parameter as c("region", "date") and the summary_cols parameter as "sales_amount". This groups the data by region and date, and computes the sum of the sales_amount column for each group.
+
+Finally, we extract the summary data from sales_summary using the @data slot and view it to see the results of our grouping and summarization. The resulting summary data will show the total sales amount for each unique combination of region and date.
+
+--------------------------------------------------------------------------------
+
+#11. Importing dataset
+
+```{r}
+# Define the class for importing data
+setClass("DataImport",
+         contains = "DataCleaning",
+         slots = list(data = "data.frame", 
+                      file_path = "character"))
+
+# Define the method for importing data from a CSV file
+setGeneric("importFromCSV",
+           function(object, ...) {
+             standardGeneric("importFromCSV")
+           })
+
+setMethod("importFromCSV",
+          signature(object = "DataImport"),
+          function(object, ...) {
+            data <- read.csv(file = object@file_path, ...)
+            new("DataImport", data = data, file_path = object@file_path)
+          })
+
+# Define the method for importing data from an Excel file
+setGeneric("importFromExcel",
+           function(object, ...) {
+             standardGeneric("importFromExcel")
+           })
+
+setMethod("importFromExcel",
+          signature(object = "DataImport"),
+          function(object, sheet_name = 1, ...) {
+            data <- readxl::read_excel(path = object@file_path, sheet = sheet_name, ...)
+            new("DataImport", data = data, file_path = object@file_path)
+          })
+
+```
+
+```{r}
+# Create an instance of the DataImport class for a CSV file
+csv_file <- new("DataImport", file_path = "client_attrition_train.csv")
+imported_data <- importFromCSV(csv_file)
+str(imported_data)
+```
+
+
+```{r}
+# Create an instance of the DataImport class for an Excel file
+excel_file <- new("DataImport", file_path = "data.xlsx")
+imported_data <- importFromExcel(excel_file, sheet_name = "Sheet1")
+```
+
+
