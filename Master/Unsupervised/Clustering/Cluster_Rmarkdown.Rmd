@@ -1,0 +1,594 @@
+---
+title: "Clustering of real estate ads for sale in Poland"
+author: "Sugarbayar Enkhbayar"
+date: "1/13/2023"
+output:
+  html_document:
+    toc: yes
+    theme: united
+  pdf_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+The clustering model is one of the important models in machine learning. This method is widely used in all fields such as medicine, economics, biology, and chemistry. By clustering users and making the most suitable incentives and activations for each cluster, it is possible to increase profit and revenue. This project will cluster real estate ads for sale in Poland on realting.com. This website is one of the biggest international affiliate sales systems with 20 years of experience. Data is scraped from realting.com with Rvest package.
+I also created an interactive dashboard with the Kmeans model using the results of the last model. You can see it at (https://sugarbayar.shinyapps.io/Cluster_KMeans/). Firstly, you have to choose a number of cluster and distance methods. After it, you can see the result of this model as a graphic and table. 
+
+## Datasets
+### Data collection - web scrape
+You need 30 minutes to run the below web scraping code. After doing the web scraping, I saved the results as a df_all.RDS file. We have a total of 137 pages of web data. So I wrote a loop up to 137. Other useful information is written as a comment.
+```{r eval=T,warning=F,message=F}
+library(rvest)
+library(tidyverse)
+library(stringr)
+library(xml2)
+library(knitr)
+# copy urls
+df_urls=data.frame(urls=character()) # create emply df
+for (i in 4:7) { # 137 pages. But in order to show you example, I write 4:7 instead of 1:137
+  url=paste0('https://realting.com/property-for-sale/poland?page=',i,'&movemap-input=1&slug=property-for-sale&Estate%5Bgeo_id%5D=55&Estate%5Bcurrency%5D=EUR&Estate%5Bx1%5D=3.2080078125000004&Estate%5By1%5D=42.58544425738491&Estate%5Bx2%5D=34.80468750000001&Estate%5By2%5D=59.93300042374631&Estate%5Bzoom%5D=5&sort=-created_at') # create i_th page url
+  url=read_html(url) # read i_th page link
+  url_all=html_nodes(url,'a') %>% html_attr('href') # all links on i_th page
+  url_tail=data.frame(x=url_all[seq(71,129,2)]) # create necessary tail of all links on i_th pag
+  url_head=data.frame(y=rep('https://realting.com',nrow(url_tail))) # create same head of all links on i_th page
+  url_full=cbind(url_head,url_tail) # column bind two dfs
+  url_full$url_long=paste0(url_full$y,url_full$x) # combine head of link and tail of link
+  add_url=data.frame(urls=url_full$url_long) 
+  df_urls=rbind(df_urls,add_url) # row bind each i_th df
+  df_urls=unique(df_urls) # unique and check
+}
+head(df_urls,3)
+```
+I have about 4000 adv links. Each link contains price data and text data. Text data includes other useful information such as count of bedrooms, count of bathrooms, and count of floors...
+```{r eval=T,warning=F,message=F}
+# copy price and other data
+df_pre=data.frame(y=character(),x=character()) # create empty df. x is text data. y is price data
+for (i in 3:8) { # We have about 4000 urls. But in order to show you example, I write 5 instead of nrow(df_urls)
+  url_read=read_html(df_urls[i,])
+  url_price=html_nodes(url_read,'.price') %>% html_text() # price data of i_th adv
+  #url_price=data.frame(y=url_price[1])
+  url_text=html_nodes(url_read,'.newb-params') %>% html_text2() # text data of i_th adv. use class names
+  df_add=data.frame(x=url_text,y=url_price[1]) # combine price and text data
+  df_pre=rbind(df_pre,df_add) # row bind
+  df_pre<-unique(df_pre) # unique
+}
+head(df_pre,1)
+```
+There are some important variables of property data for sale in Poland.
+
+* Address - address of property
+* Bathrooms - count of bathroom
+* Bedrooms - count of bedroom
+* Floor - floor number of building
+* Gorod - 
+* Number - floor number of apartment
+* Oblast
+* Posted - posted data of adv
+* price - price dollar $
+* Rooms - count of rooms
+* Updated - updated date of adv
+* Strana - 
+* Total - total square meter
+
+As you see, all the information we need is in very long text. So we need to write a function to distinguish between them. I used gsub function. After it, I wrote a text mining code suitable for each case.
+```{r eval=T,warning=F,message=F}
+# create df from web scrape
+df_all<-data.frame(c1=c("Address:","Bathrooms","Bedrooms","Floor:","Gorod:","Number","Oblast","Posted","price","Rooms:","Strana:","Total","Updated"),
+                   check=c('','','','','','','','','','','','','')) # create empty df for last dataframe
+for (i in 1:nrow(df_pre)) {
+  try({ # loop will continue. don't care error
+    Split <- function(string) {
+      s1 <- gsub("\n", "\\1\n", string)
+      #s2 <- gsub("(.{3})", "\\1\n", s1)
+      spl <- strsplit(s1, "\n")
+      lapply(spl, function(s) replace(s, s == "   ", ""))
+    }
+    df_adv=Split(df_pre[i,]$x)
+    df_text=df_adv[[1]][1:16]
+    df_text=data.frame(c=df_text)
+    df_text$c1=word(df_text$c,1)
+    df_text=df_text[complete.cases(df_text),]
+    df_text$value[df_text$c1=='Posted']<-sub("Posted at:*", "", df_text$c[df_text$c1=='Posted'])
+    df_text$value[df_text$c1=='Updated']<-sub("Updated at:*", "", df_text$c[df_text$c1=='Updated'])
+    df_text$value[df_text$c1=='Strana:']<-sub("Strana:*", "", df_text$c[df_text$c1=='Strana:'])
+    df_text$value[df_text$c1=='Oblast']<-sub("Oblast shtat:*", "", df_text$c[df_text$c1=='Oblast'])
+    df_text$value[df_text$c1=='Gorod:']<-sub("Gorod:*", "", df_text$c[df_text$c1=='Gorod:'])
+    df_text$value[df_text$c1=='Address:']<-sub("Address:*", "", df_text$c[df_text$c1=='Address:'])
+    df_text$value[df_text$c1=='Number']<-sub("Number of floors:*", "", df_text$c[df_text$c1=='Number'])
+    df_text$value[df_text$c1=='Floor:']<-sub("Floor:*", "", df_text$c[df_text$c1=='Floor:'])
+    df_text$value[df_text$c1=='Rooms:']<-sub("Rooms:*", "", df_text$c[df_text$c1=='Rooms:'])
+    df_text$value[df_text$c1=='Bedrooms']<-sub("Bedrooms*", "", df_text$c[df_text$c1=='Bedrooms'])
+    df_text$value[df_text$c1=='Bathrooms']<-sub("Bathrooms*", "", df_text$c[df_text$c1=='Bathrooms'])
+    df_text$value[df_text$c1=='Total']<-sub("Total area:*", "", df_text$c[df_text$c1=='Total'])
+    df_text=df_text %>% select(c1,value)
+    df_price=data.frame(c1='price',value=df_pre[i,]$y)
+    df_adv_add=rbind(df_text,df_price)
+    colnames(df_adv_add)[2]<-i
+    df_adv_add=unique(df_adv_add)
+    df_all<-merge(df_all,df_adv_add,by=c('c1'),all.x = T,all.y = F)
+  })
+}
+df_all[,1:4]
+```
+### Data cleaning
+I have 16 variables and, 4014 observations. I don't use address, gorod, oblast, and strana variables. So I deleted them from df_all.
+After that, I changed the type of variables. And I created two variables. **Posted day** variable is the count of days since posted day. 
+But **Updated day** variable is the count of days since updated day.
+```{r eval=T,warning=F,message=F}
+library(tidyverse)
+df_all=readRDS("df_all.RDS")
+df_all=df_all[-2]
+df_all<-data.frame(t(df_all))
+colnames(df_all)=df_all[1,]
+df_all<-df_all[-1,]
+df_all <- df_all[, !duplicated(colnames(df_all))]
+df_all<-unique(df_all)
+df_all<-df_all %>% select(-`Address:`,-`Gorod:`,-Oblast,-`Strana:`)
+for (i in 1:length(df_all)) {
+  df_all[,i]=gsub("[^[:digit:]., ]", "", df_all[,i])
+  df_all[,i]=gsub("[][!#$%()*,:;<=>@^_`|~{}]", "", df_all[,i])
+  df_all[,i]=gsub(" ", "", df_all[,i])
+}
+df_all$Bathrooms<-as.numeric(df_all$Bathrooms)
+df_all$Bedrooms<-as.numeric(df_all$Bedrooms)
+df_all$`Floor:`<-as.numeric(df_all$`Floor:`)
+df_all$Number<-as.numeric(df_all$Number)
+df_all$`Rooms:`<-as.numeric(df_all$`Rooms:`)
+df_all$Total<-as.numeric(df_all$Total)
+df_all$price<-as.numeric(df_all$price)
+df_all$Posted<-as.Date(df_all$Posted,'%d.%m.%Y')
+df_all$Updated<-as.Date(df_all$Updated,'%d.%m.%Y')
+df_all$Posted_day=Sys.Date()-df_all$Posted
+df_all$Updated_day=Sys.Date()-df_all$Updated
+head(df_all)
+count(df_all)
+```
+## Exploratory Data Analysis {.tabset}
+Before using machine learning model, we need to exploratory data analysis.
+### Variable identification
+We will use these variables for cluster analysis. 
+```{r eval=T,warning=F,message=F}
+colnames(df_all) 
+```
+There are two *date variables* and two *difftime variables*. Also, there are seven *numeric variables*.
+```{r eval=T,warning=F,message=F}
+sapply(df_all,class)
+```
+### Missing values treatment
+In our dataset, there are many NA rows. We can generate some NA values using price data. But this is not an optimal way. Bathrooms, floor, bedrooms, and room column has the most NA values. So I decided to delete rows with NA value from the dataset.
+```{r eval=T,warning=F,message=F}
+sapply(df_all, function(x) sum(is.na(x)))
+df_all=df_all[complete.cases(df_all),]
+```
+After removing NA rows, there are 297 observations. We will use it from now on. It is our final dataset.
+```{r eval=T,warning=F,message=F}
+sapply(df_all, function(x) sum(is.na(x)))
+count(df_all)
+df_all=df_all %>% select(-Posted,-Updated) # we don't need posted, updated variables anymore. Because we have posted_day and updated_day variables.
+df_all$Posted_day<-as.numeric(df_all$Posted_day)
+df_all$Updated_day<-as.numeric(df_all$Updated_day)
+```
+### Univariate analysis
+#### Central Tendency
+The maximum number of bathrooms and bedrooms is 8. The highest floor is 27. The maximum number of rooms is 8. The biggest apartment is 554-meter square. The maximum price of the apartment is 1628k, the minimum price of the apartment is 66k, and the average price of the apartment is 200k. 
+```{r eval=T,warning=F,message=F}
+summary(df_all)
+```
+#### Measure of dispersion
+```{r eval=T,warning=F,message=F}
+library(e1071)
+library(moments)
+tibble(
+    Column   = names(df_all),
+    Variance = purrr::map_dbl(df_all, var),
+    SD       = purrr::map_dbl(df_all, sd),
+    IQR      = purrr::map_dbl(df_all,IQR),
+    SKW      = purrr::map_dbl(df_all,skewness),
+    KRT      = purrr::map_dbl(df_all,kurtosis))
+```
+
+#### Visualization of EDA
+```{r eval=T,warning=F,message=F}
+par(mfrow = c(1,4)) # two rows, one column
+boxplot(df_all[c(1,2,6)],main='Bathrooms,Bedrooms,Rooms')
+boxplot(df_all[c(3,4)],main='Floor,Number')
+boxplot(df_all[c(5)],main="Price")
+boxplot(df_all[c(8,9)],main="Posted,Updated")
+par(mfrow = c(3,3)) # two rows, one column
+for(i in 1:9){
+  hist(df_all[,i],main = colnames(df_all)[i])
+}
+par(mfrow = c(1,1))
+```
+
+### Bi-variate analysis
+As you can see in the below graph, there are many variables that are strongly positively correlated. For example, as the number of bathrooms and bedrooms increases, the price increases.
+```{r eval=T,warning=F,message=F}
+library(PerformanceAnalytics)
+chart.Correlation(df_all)
+```
+
+### Outlier treatment
+Outlier data were identified using IQR values. There were a total of 62 outlier data, which were removed from the original data. Also, the Bathroom variable is right-skewed, so it should be removed.
+```{r eval=T,warning=F,message=F}
+for (i in 1:9) {
+  q1=quantile(df_all[,i], .25)
+  q3=quantile(df_all[,i], .75)
+  IQR=IQR(df_all[,i])
+  count_out<-subset(df_all, df_all[,i] > (q1 - 1.5*IQR) & df_all[,i] < (q3 + 1.5*IQR))
+  print(paste0(colnames(df_all)[i]," variable count of outlier - ",count(df_all)-count(count_out)))
+}
+outliers=df_all[0,]
+for (i in 2:9) {
+  q1=quantile(df_all[,i], .25)
+  q3=quantile(df_all[,i], .75)
+  IQR=IQR(df_all[,i])
+  count_out<-subset(df_all, df_all[,i] > (q1 - 1.5*IQR) & df_all[,i] < (q3 + 1.5*IQR))
+  add_out<-setdiff(df_all,count_out)
+  outliers<-rbind(outliers,add_out)
+  outliers<-unique(outliers)
+}
+df_all<-setdiff(df_all,outliers)
+count(df_all)
+```
+
+## Non-hierarchical method {.tabset}
+There are many non-hierarchical methods such as kmeans, pam, calra, and fanny. Also, we tried euclidean, manhattan, minkowski, and canberra as hc_metrics. But results of these parameters are the same. So I decided to use only euclidean. Before any clustering model, we need to normalize our  dataset. Because it is more efficient to divide normalized data into clusters.
+```{r eval=T,warning=F,message=F}
+df=df_all[c('Bathrooms','Bedrooms','Floor:','Number','price','Rooms:','Total','Posted_day','Updated_day')]
+### Data normalized
+df$Bathrooms<-scale(df$Bathrooms)
+df$Bedrooms<-scale(df$Bedrooms)
+df$`Floor:`<-scale(df$`Floor:`)
+df$Number<-scale(df$Number)
+df$price<-scale(df$price)
+df$`Rooms:`<-scale(df$`Rooms:`)
+df$Total<-scale(df$Total)
+df$Posted_day<-scale(df$Posted_day)
+df$Updated_day<-scale(df$Updated_day)
+```
+I used Hopkins statistics to measure of cluster tendency of the data set.
+Hopkin=1 - data is highly clustered
+Hopkin=0.5 - random data
+Hopkin=0 - uniformly distributed data.
+Hopkins statistic of our data set is 0.987, which is almost 1. So it means our data set is highly clustered good data set.
+```{r eval=T,warning=F,message=F}
+library(factoextra)
+hopkins::hopkins(df)
+get_clust_tendency(df, 2, graph=TRUE, gradient=list(low="red", mid="white", high="blue"))
+```
+
+### silhouette
+I used all possible non-hierarchical models and a number of clusters. We can see silhouette values for each case. The higher silhouette value is better. As you see, the 2 cluster kmeans model's silhouette value is the highest one. It is 0,3446. So it is the best model.
+```{r eval=T,warning=F,message=F}
+library(factoextra)
+library(cluster)
+library(formattable)
+res_k=data.frame(Kcount=as.numeric(),sil=as.numeric())
+cluster_model <- function(model_in,model_out) {
+  res=data.frame(Kcount=as.numeric(),sil=as.numeric())
+  for(i in 2:10){
+    km1=eclust(df,FUNcluster = c(model_in),k=i,graph = F,hc_metric = 'euclidean')
+    add_res<-data.frame(kcount=i,sil=km1$silinfo$avg.width)
+    res<-rbind(res,add_res)
+    res<-unique(res)
+  }
+  return(res)
+}
+for (z in c("kmeans", "pam", "clara", "fanny", "hclust", "agnes", "diana")) {
+  assign(paste0(z,'_out'),cluster_model(z,result_kmeans))
+  #kmeans_out=cluster_model(z,result_kmeans)
+}
+colnames(kmeans_out)[2]<-'kmeans.sil'
+colnames(pam_out)[2]<-'pam.sil'
+colnames(clara_out)[2]<-'clara.sil'
+colnames(fanny_out)[2]<-'fanny.sil'
+colnames(hclust_out)[2]<-'hclust.sil'
+colnames(agnes_out)[2]<-'agnes.sil'
+colnames(diana_out)[2]<-'diana.sil'
+df_list <- list(kmeans_out,pam_out,clara_out,fanny_out,hclust_out,agnes_out,diana_out)
+Result_Models=Reduce(function(x, y) merge(x, y, all=TRUE), df_list)
+formattable(Result_Models,list(kmeans.sil=color_tile('transparent','lightgreen'),
+                               pam.sil=color_tile('transparent','lightgreen'),
+                               clara.sil=color_tile('transparent','lightgreen'),
+                               fanny.sil=color_tile('transparent','lightgreen'),
+                               hclus.silt=color_tile('transparent','lightgreen'),
+                               agnes.sil=color_tile('transparent','lightgreen'),
+                               diana.sil=color_tile('transparent','lightgreen')))
+```
+
+Also, we can use gap statistic. Lower gap value is better. As you see, 2 cluster kmeans model's gap value is the lowest one. It is 0,4776.
+### gap
+```{r eval=T,warning=F,message=F}
+res_kmean_gap=clusGap(df,FUN=kmeans,K.max = 10,B=2)
+res_kmean_gap=data.frame(res_kmean_gap$Tab)
+res_kmean_gap=data.frame(kcount=1:10,res_kmean_gap$gap)
+res_pam_gap=clusGap(df,FUN=pam,K.max = 10,B=2)
+res_pam_gap=data.frame(res_pam_gap$Tab)
+res_pam_gap=data.frame(kcount=1:10,res_pam_gap$gap)
+res_clara_gap=clusGap(df,FUN=clara,K.max = 10,B=2)
+res_clara_gap=data.frame(res_clara_gap$Tab)
+res_clara_gap=data.frame(kcount=1:10,res_clara_gap$gap)
+res_fanny_gap=clusGap(df,FUN=fanny,K.max = 10,B=2)
+res_fanny_gap=data.frame(res_fanny_gap$Tab)
+res_fanny_gap=data.frame(kcount=1:10,res_fanny_gap$gap)
+df_list <- list(res_kmean_gap,res_pam_gap,res_clara_gap,res_fanny_gap)
+Result_gap=Reduce(function(x, y) merge(x, y, all=TRUE), df_list)
+formattable(Result_gap[-1,],list(res_kmean_gap.gap=color_tile('transparent','lightgreen'),
+                                 res_pam_gap.gap	=color_tile('transparent','lightgreen'),
+                                 res_clara_gap.gap	=color_tile('transparent','lightgreen'),
+                                 res_fanny_gap.gap=color_tile('transparent','lightgreen')))
+```
+
+
+### calinski
+Also, you can use calinski value to choose the best model.
+```{r eval=T,warning=F,message=F}
+library(factoextra)
+library(cluster)
+library(formattable)
+library(fpc)
+res_k=data.frame(Kcount=as.numeric(),sil=as.numeric())
+cluster_model <- function(model_in,model_out) {
+  res=data.frame(Kcount=as.numeric(),sil=as.numeric())
+  for(i in 2:10){
+    km1=eclust(df,FUNcluster = c(model_in),k=i,graph = F,hc_metric = 'euclidean')
+    add_res<-data.frame(kcount=i,calinski=round(calinhara(df,km1$cluster),digits=2))
+    res<-rbind(res,add_res)
+    res<-unique(res)
+  }
+  return(res)
+}
+for (z in c("kmeans", "pam", "clara", "fanny", "hclust", "agnes", "diana")) {
+  assign(paste0(z,'_out'),cluster_model(z,result_kmeans))
+}
+colnames(kmeans_out)[2]<-'kmeans.calins'
+colnames(pam_out)[2]<-'pam.calins'
+colnames(clara_out)[2]<-'clara.calins'
+colnames(fanny_out)[2]<-'fanny.calins'
+colnames(hclust_out)[2]<-'hclust.calins'
+colnames(agnes_out)[2]<-'agnes.calins'
+colnames(diana_out)[2]<-'diana.calins'
+df_list <- list(kmeans_out,pam_out,clara_out,fanny_out,hclust_out,agnes_out,diana_out)
+Result_Models=Reduce(function(x, y) merge(x, y, all=TRUE), df_list)
+formattable(Result_Models,list(kmeans.calins=color_tile('transparent','lightgreen'),
+                               pam.calins=color_tile('transparent','lightgreen'),
+                               clara.calins=color_tile('transparent','lightgreen'),
+                               fanny.calins=color_tile('transparent','lightgreen'),
+                               hclust.calins=color_tile('transparent','lightgreen'),
+                               agnes.calins=color_tile('transparent','lightgreen'),
+                               diana.calins=color_tile('transparent','lightgreen')))
+```
+
+### dudahard
+```{r eval=T,warning=F,message=F}
+#####################################################
+library(factoextra)
+library(cluster)
+library(formattable)
+res_k=data.frame(Kcount=as.numeric(),sil=as.numeric())
+cluster_model <- function(model_in,model_out) {
+  res=data.frame(Kcount=as.numeric(),sil=as.numeric())
+  for(i in 2:10){
+    km1=eclust(df,FUNcluster = c(model_in),k=i,graph = F,hc_metric = 'euclidean')
+    add_res<-data.frame(kcount=i,dudahart=dudahart2(df,km1$cluster)[1])
+    res<-rbind(res,add_res)
+    res<-unique(res)
+  }
+  return(res)
+}
+for (z in c("kmeans", "pam", "clara", "fanny", "hclust", "agnes", "diana")) {
+  assign(paste0(z,'_out'),cluster_model(z,result_kmeans))
+  #kmeans_out=cluster_model(z,result_kmeans)
+}
+colnames(kmeans_out)[2]<-'kmeans.duda'
+colnames(pam_out)[2]<-'pam.duda'
+colnames(clara_out)[2]<-'clara.duda'
+colnames(fanny_out)[2]<-'fanny.duda'
+colnames(hclust_out)[2]<-'hclust.duda'
+colnames(agnes_out)[2]<-'agnes.duda'
+colnames(diana_out)[2]<-'diana.duda'
+df_list <- list(kmeans_out,pam_out,clara_out,fanny_out,hclust_out,agnes_out,diana_out)
+Result_Models=Reduce(function(x, y) merge(x, y, all=TRUE), df_list)
+formattable(Result_Models,list(kmeans.duda=color_tile('transparent','lightgreen'),
+                               pam.duda=color_tile('transparent','lightgreen'),
+                               clara.duda=color_tile('transparent','lightgreen'),
+                               fanny.duda=color_tile('transparent','lightgreen'),
+                               hclust.duda=color_tile('transparent','lightgreen'),
+                               agnes.duda=color_tile('transparent','lightgreen'),
+                               diana.duda=color_tile('transparent','lightgreen')))
+```
+
+## Result of non-hierarchical method {.tabset}
+
+The best model is the 2 cluster kmeans model. Now we analyze the result of this model. 
+
+### Clusters and silhouette
+We have blue and red two clusters. And we have two dimensions. Variance of Dim1 is 43,4% of other variables. And variance of Dim2 is 17% of other variable. In other words, Dim1 can explain 43,4 percent of the other variables. Average silhouette value is 0,33.
+```{r eval=T,warning=F,message=F}
+  km1=eclust(df,FUNcluster = c("kmeans"),k=2,graph = F,hc_metric = 'euclidean')
+  fviz_cluster(km1,ellipse.type = 'norm')
+  fviz_silhouette(km1)
+```
+
+### Variable importance
+The lower the value for the misclassification rate is the better. Total, price, rooms, and bedrooms variables are the  most important variables. 
+```{r eval=T,warning=F,message=F}
+  library(flexclust)
+  library(FeatureImpCluster)
+  km=kcca(df, k=2)
+  FeatureImp_km<-FeatureImpCluster(km, as.data.table(df))
+  plot(FeatureImp_km)
+```
+
+### Shadow statistics
+```{r eval=T,warning=F,message=F}
+  library(flexclust)
+  library(FeatureImpCluster)
+  d1<-cclust(df,2,dist="euclidean")
+  shadow(d1)
+  plot(shadow(d1))
+```
+
+### Other statistics
+
+```{r eval=T,warning=F,message=F}
+  km1=eclust(df,FUNcluster = c("kmeans"),k=2,graph = F,hc_metric = 'euclidean')
+  km1[2]
+  km1[7]
+  c1=data.frame(clusts=km1[1])
+  c1=cbind(c1,df)
+  c1 %>% group_by(cluster) %>% summarize(mean_bath=mean(Bathrooms),
+                                       mean_bed=mean(Bedrooms),
+                                       mean_floor=mean(`Floor:`),
+                                       mean_num=mean(Number),
+                                       mean_price=mean(price),
+                                       mean_room=mean(`Rooms:`),
+                                       mean_total=mean(Total),
+                                       mean_posted=mean(Posted_day),
+                                       mean_updated=mean(Updated_day))
+```
+
+
+## Hierarhical method
+
+A hierarchical model with 2 clusters has the largest silhouette value. So the optimal number of clusters is 2. I will use this model from now on.
+```{r eval=T,warning=F,message=F}
+library(ClustGeo)
+hier_res=data.frame(kcount=numeric(),Q=numeric(),sil=numeric())
+for (i in 2:10) {
+  dm<-dist(df)
+  hc=hclust(dm,method = 'complete')
+  clust<-cutree(hc,k=i)
+  diss.mat<-dm
+  Q_add=1-(withindiss(diss.mat,part=clust)/inertdiss(diss.mat))
+  sil_add=data.frame(silhouette(clust,dm))
+  sil_add=mean(sil_add$sil_width)
+  add=data.frame(kcount=i,Q=Q_add,sil=sil_add)
+  hier_res<-rbind(hier_res,add)
+}
+formattable(hier_res,list(Q=color_tile('transparent','lightgreen'),
+                          sil=color_tile('transparent','lightgreen')))
+```
+
+## Result of hierarchical method {.tabset}
+
+### Cluster plot
+
+```{r eval=T,warning=F,message=F}
+dm<-dist(df)
+hc=hclust(dm,method = 'complete')
+clust<-cutree(hc,k=2)
+diss.mat<-dm
+fviz_cluster(list(data=df, cluster=clust))
+```
+
+### Silhouette
+
+```{r eval=T,warning=F,message=F}
+dm<-dist(df)
+hc=hclust(dm,method = 'complete')
+clust<-cutree(hc,k=2)
+diss.mat<-dm
+plot(silhouette(clust,dm))
+```
+
+### Statistic
+
+```{r eval=T,warning=F,message=F}
+dm<-dist(df)
+hc=hclust(dm,method = 'complete')
+clust<-cutree(hc,k=2)
+diss.mat<-dm
+y=data.frame(ks=clust)
+y_sum=y %>% group_by(ks) %>% summarize(count=n())
+formattable(y_sum)
+res_hiar_sta<-cbind(df,y)
+res_hiar_sta %>% group_by(ks) %>% summarize(mean_bath=mean(Bathrooms),
+                                     mean_bed=mean(Bedrooms),
+                                     mean_floor=mean(`Floor:`),
+                                     mean_num=mean(Number),
+                                     mean_price=mean(price),
+                                     mean_room=mean(`Rooms:`),
+                                     mean_total=mean(Total),
+                                     mean_posted=mean(Posted_day),
+                                     mean_updated=mean(Updated_day))
+```
+
+## Difference between results of non-hierarchical and hierarchical method
+
+Let's explain the difference between these two cluster models and the result of the project.
+* In Kmeans, 173 ads in cluster 1 and 62 ads in cluster 2
+* In Hierarchical, 158 ads in cluster 1 and 77 ads in cluster 2
+* Silhouette value of Kmeans is higher than the hierarchical model's
+* The 2nd cluster includes apartments that are more expensive, have more rooms, have a larger area, and are located at a higher elevation.
+* Cluster 1 - there are only ads for cheap property houses. 
+* Cluster 2 - there are ads for Luxury houses with a high price.
+```{r eval=T,warning=F,message=F,include=F}
+km1=eclust(df,FUNcluster = c("kmeans"),k=2,graph = F,hc_metric = 'euclidean')
+c1=data.frame(clusts=km1[1])
+c1=cbind(c1,df)
+c2=c1 %>% group_by(cluster) %>% summarize(count=n())
+
+dm<-dist(df)
+hc=hclust(dm,method = 'complete')
+clust<-cutree(hc,k=2)
+diss.mat<-dm
+Q_add=1-(withindiss(diss.mat,part=clust)/inertdiss(diss.mat))
+sil_add=data.frame(silhouette(clust,dm))
+sil_add=mean(sil_add$sil_width)
+y=data.frame(ks=clust)
+y_sum=y %>% group_by(ks) %>% summarize(count=n()) %>% data.frame()
+res_hiar_sta<-cbind(df,y)
+kmeans_tb<-data.frame(model="kmeans",sil=km1$silinfo$avg.width,num_clus1=c2[c2$cluster==1,]$count,num_clus2=c2[c2$cluster==2,]$count)
+hiar_tb<-data.frame(model="hierarchical",sil=sil_add,num_clus1=y_sum[y_sum$ks==1,]$count,num_clus2=y_sum[y_sum$ks==2,]$count)
+table1<-rbind(kmeans_tb,hiar_tb)
+table21<-c1 %>% group_by(cluster) %>% summarize(avg_bathroom=mean(Bathrooms),
+                                                avg_bedroom=mean(Bedrooms),
+                                                avg_floor=mean(`Floor:`),
+                                                avg_number=mean(Number),
+                                                avg_price=mean(price),
+                                                avg_room=mean(`Rooms:`),
+                                                avg_total=mean(Total),
+                                                avg_posted=mean(Posted_day),
+                                                avg_updated=mean(Updated_day)) %>% data.frame()
+table21$model<-'kmeans'
+table31<-res_hiar_sta %>% group_by(ks) %>% summarize(avg_bathroom=mean(Bathrooms),
+                                                avg_bedroom=mean(Bedrooms),
+                                                avg_floor=mean(`Floor:`),
+                                                avg_number=mean(Number),
+                                                avg_price=mean(price),
+                                                avg_room=mean(`Rooms:`),
+                                                avg_total=mean(Total),
+                                                avg_posted=mean(Posted_day),
+                                                avg_updated=mean(Updated_day)) %>% data.frame()
+table31$model<-'hierarchical'
+colnames(table31)[1]<-'cluster'
+table2<-rbind(table21[table21$cluster==1,],table31[table31$cluster==1,])
+table3<-rbind(table21[table21$cluster==2,],table31[table31$cluster==2,])
+table2<-table2 %>% select(model,cluster,avg_bathroom,avg_bedroom,avg_floor,avg_number,avg_price,avg_room,avg_total,avg_posted,avg_updated)
+table3<-table3 %>% select(model,cluster,avg_bathroom,avg_bedroom,avg_floor,avg_number,avg_price,avg_room,avg_total,avg_posted,avg_updated)
+```
+```{r eval=T,warning=F,message=F,include=T}
+formattable(table1)
+formattable(table2)
+formattable(table3)
+```
+
+## Prediction
+
+I will predict set.test using kmeans model. Test data is part of all data. To predict the 6 data below using the Kmeans model, all values belong to the 2nd cluster.
+```{r eval=T,warning=F,message=F}
+set.train=df[-c(230:235),]						
+set.test=df[c(230:235),]															
+km_model=eclust(set.train,"kmeans",hc_metric = 'euclidean',k=2,graph = F)								
+km2.kcca<-as.kcca(km_model, set.train) # it is important								
+km2.pred<-predict(km2.kcca, set.test) 								
+km2.pred
+```
+
+
